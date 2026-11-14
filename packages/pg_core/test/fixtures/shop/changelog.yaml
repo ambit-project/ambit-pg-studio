@@ -1,0 +1,5 @@
+# Fixture: includeAll in path order, like the folders of our apps.
+databaseChangeLog:
+  - includeAll:
+      path: changelog/
+      relativeToChangelogFile: true

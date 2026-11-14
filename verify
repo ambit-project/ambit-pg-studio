@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+# Verification groups (the verify commands of the SDD specs):
+#   ./verify core          pg_core unit tests (libpg_query FFI, index, references)
+#   ./verify corpus        pg_core tests on the real database folders of the neighbouring repos (skipped when missing)
+#   ./verify conventions   pg_core tests of the stack conventions (modules, _app contract, ERRCODE)
+#   ./verify authoring     writing help: completion, signatures, rename, templates, search and replace (pg_core + app)
+#   ./verify columns       column uses, definitions and impact (pg_core + app)
+#   ./verify history       object history, effective DDL, the branch against main (pg_core, real folders, app)
+#   ./verify cli           pg-studio-cli and the MCP server (pg_core test/cli, real folders included)
+#   ./verify format        formatter: unit tests + the three real folders (meaning kept, idempotent, deployed untouched)
+#   ./verify package       .deb: build, lintian (no errors or warnings), install/start/remove in ubuntu:26.04 and debian:13
+#   ./verify lint          dart format check + analyzer (app and pg_core)
+#   ./verify ui|nav|editor|graph   widget tests of the app (test/<group>/)
+#   ./verify build         flutter build linux --release, libpg_query.so in the bundle
+#   ./verify all           everything above
+set -euo pipefail
+cd "$(dirname "$0")"
+
+core() { (cd packages/pg_core && dart test --exclude-tags corpus,conventions "$@"); }
+corpus() { (cd packages/pg_core && dart test --tags corpus "$@"); }
+conventions() {
+  (cd packages/pg_core && dart test --tags conventions "$@")
+  flutter test test/rules
+}
+authoring() {
+  (cd packages/pg_core && dart test test/complete_test.dart test/rename_test.dart test/templates_test.dart test/search_test.dart "$@")
+  flutter test test/complete test/rename test/templates test/search
+}
+columns() {
+  (cd packages/pg_core && dart test test/columns_test.dart "$@")
+  flutter test test/columns
+}
+history() {
+  (cd packages/pg_core && dart test test/history_test.dart test/changes_test.dart "$@")
+  flutter test test/history test/changes
+}
+cli() { (cd packages/pg_core && dart test test/cli "$@"); }
+format() {
+  (cd packages/pg_core && dart test test/format test/corpus/format_corpus_test.dart "$@")
+  flutter test test/format
+}
+package() {
+  scripts/package-deb.sh
+  local deb
+  deb="$(ls build/deb/pg-studio_*_amd64.deb | head -1)"
+  if lintian --info "$deb" | grep -E '^[EW]:'; then echo "lintian: errors or warnings" >&2; exit 1; fi
+  echo "lintian: clean"
+  scripts/test-deb.sh
+}
+lint() {
+  dart format --output=none --set-exit-if-changed lib test integration_test packages/pg_core/lib packages/pg_core/test packages/pg_core/hook packages/pg_core/tool
+  flutter analyze
+  (cd packages/pg_core && dart analyze --fatal-infos)
+}
+app_tests() {
+  local dir="test/$1"
+  if [[ -d "$dir" ]]; then flutter test "$dir"; else echo "no tests in $dir yet" >&2; exit 1; fi
+}
+terminal() {
+  flutter test test/terminal
+  flutter test integration_test/terminal_test.dart -d linux
+}
+build() {
+  flutter build linux --release
+  test -f build/linux/x64/release/bundle/lib/libpg_query.so || { echo "libpg_query.so missing in the bundle" >&2; exit 1; }
+  echo "bundle: build/linux/x64/release/bundle/pg_studio"
+}
+
+group="${1:-all}"
+case "$group" in
+  core) core ;;
+  corpus) corpus ;;
+  conventions) conventions ;;
+  authoring) authoring ;;
+  columns) columns ;;
+  history) history ;;
+  cli) cli ;;
+  format) format ;;
+  package) package ;;
+  terminal) terminal ;;
+  lint) lint ;;
+  ui|nav|editor|graph) app_tests "$group" ;;
+  build) build ;;
+  all) lint; core; corpus; conventions; flutter test; build ;;
+  *) echo "unknown group: $group" >&2; exit 2 ;;
+esac
